@@ -1,0 +1,26 @@
+pipeline:
+  build_apis:
+    group: build
+    image: ruby
+    commands:
+      - bundle install --retry=3
+
+  docker_image:
+    image: plugins/docker
+    registry: walmartdigital.azurecr.io
+    repo: walmartdigital.azurecr.io/hello-ruby
+    tags:
+      - latest
+      - build-${DRONE_BUILD_NUMBER}
+    secrets: [ docker_username, docker_password ]
+    when:
+      branch: [ master ]
+
+  sonar_validate:
+  - name: code-analysis
+    image: aosapps/drone-sonar-plugin
+    settings:
+        sonar_host:
+          from_secret: sonar_host
+        sonar_token:
+          from_secret: sonar_token

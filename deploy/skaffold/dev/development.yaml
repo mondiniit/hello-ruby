@@ -1,0 +1,140 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ruby
+  labels:
+    name: ruby
+---
+
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  namespace: ruby
+  name: hello-ruby
+  annotations:
+    flux.weave.works/automated: "true"
+    flux.weave.works/tag.hello-ruby: glob:1.0.*
+spec:
+  replicas: 1
+  # selector:
+  #   matchLabels: 
+  #     walmartdigital.azurecr.io/hello-ruby: hello-ruby
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: hello-ruby
+    spec:
+      containers:
+      - name: hello-ruby
+        image: walmartdigital.azurecr.io/hello-ruby
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+      - name: logrotate
+        image: walmartdigital.azurecr.io/logrotator:latest
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+      - name: fluentd-kafka
+        image: walmartdigital.azurecr.io/tools/fluentd-kafka:build-5
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: fluentd-conf
+          mountPath: /fluentd/etc/
+        resources:
+          limits:
+            cpu: 1
+            memory: 150Mi
+          requests:
+            cpu: 1
+            memory: 140Mi
+      restartPolicy: Always
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+      - name: regcreds
+      volumes:
+      - name: fluentd-conf
+        configMap:
+          name: fluentd-conf
+      - name: varlog
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-conf
+  namespace: ruby
+data:
+  fluent.conf: |-
+    <source>
+      @type tail
+      format json #formato do log a ser disponibilizado
+      path /var/log/ruby.log #estrutura de carpetas onde fica o log
+      pos_file /var/log/ruby.log.pos #estrutura onde fica o log ja tomado.
+      tag ruby.log.tag
+    </source>
+
+    <filter **> #filtro para kibana?¿
+      @type record_transformer
+      enable_ruby
+      <record>
+        app hello-ruby #nombre de la app
+        squad underworld 
+        msg-type log
+        environment tools
+        region eastus2
+        cluster jobs-k8s
+        @timestamp ${Time.now.strftime('%Y-%m-%dT%H:%M:%SZ')}
+      </record>
+    </filter>
+
+    <match fluent.**>
+      @type null #¿?
+    </match>
+
+    <filter **>
+      @type adduuid #¿?
+      key _uuid
+    </filter>
+
+    <match **>
+      @type kafka_buffered
+      brokers 20.80.1.26:32400,20.80.1.38:32401,20.80.1.36:32402
+      buffer_type file #podria ser otra cosa?
+      buffer_path /var/log/buffer/td
+      flush_interval 3s
+      default_topic logging-productos-digitales
+      output_data_type json
+      compression_codec gzip
+      max_send_retries 2
+      required_acks 1
+    </match>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-ruby
+  namespace: ruby
+  labels:
+    app: hello-ruby
+spec:
+  type: NodePort
+  ports:
+  - name: hello-ruby
+    port: 8080
+    protocol: TCP
+    targetPort: 4567
+  selector:
+    app: hello-ruby
